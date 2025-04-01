@@ -12,3 +12,5 @@ wheels/
 
 README.md
 uv.lock
+
+few_shot/
