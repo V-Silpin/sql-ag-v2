@@ -10,7 +10,6 @@ wheels/
 .venv
 .env
 
-README.md
 uv.lock
 
 few_shot/

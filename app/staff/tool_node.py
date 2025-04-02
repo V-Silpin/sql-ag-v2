@@ -40,5 +40,5 @@ def get_schema_node(state: State) -> Command[Literal["selector_agent_node"]]:
 
     return Command(
         update={"schema": schema_data},
-        goto="interpreter_agent_node",
+        goto="selector_agent_node",
     )

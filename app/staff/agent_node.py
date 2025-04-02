@@ -72,6 +72,8 @@ Todo task Reference:
 
 Your task is to identify and retrieve the column names from the specified input table targets.
 Use the tool that can provide the schema of each table.
+Also if there are two or more tables present in the table targets, then include those columns which are FOREIGN KEY
+to other tables
 
 ONLY GENERATE THE SQL QUERY, DON'T USE MARKDOWN SYNTAX TO GENERATE RESULTS
 
@@ -119,14 +121,14 @@ def selector_agent_node(state: State) -> Command[Literal["scribe_agent_node", "i
         schema += (i+"\n")
     
     response = selector_agent.invoke({"todo": question, "input": table_target_str, "schema": schema})
-    if response == "NULL":
-        return Command(
-        update=response,
-        goto="interpreter_agent_node",
-    )
+   # if response == "NULL":
+    #    return Command(
+    #    update=response,
+    #    goto="interpreter_agent_node",
+    #)
     return Command(
         update=response,
-        goto="selector_agent_node",
+        goto="scribe_agent_node",
     )
 
 scribe = """You are a SQL expert with a strong attention to detail.
@@ -197,7 +199,7 @@ def scribe_agent_node(state: State) -> Command[Literal["verify_agent_node"]]:
     if error == None:
         error = "No Error"
 
-    response = scribe_agent.invoke({"input" : question, "table_target" : table_target, "column_target": column_target, "query": query,"errorlog": error})
+    response = scribe_agent.invoke({"examples": examples, "input" : question, "table_target" : table_target, "column_target": column_target, "query": query,"errorlog": error})
     text = response.text()
     text = text.replace("sqlite", "")
     text = text.replace("`", "")
@@ -282,8 +284,7 @@ def executor_agent_node(state: State) -> Command[Literal["summary_agent_node", "
     )
 
 summary = """
-Your task is to summarize the data & the question given,
-
+Your task is to summarize the data in such a way that you are answering a question
 Question:
 {question}
 

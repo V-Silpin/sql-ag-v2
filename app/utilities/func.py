@@ -12,5 +12,6 @@ class State(TypedDict):
     generation: str | None
     data: str
     error: str | None
+    valid: str
     answer: str
     messages: Annotated[list[AnyMessage], add_messages]
