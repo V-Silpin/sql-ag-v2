@@ -52,6 +52,7 @@ interpreter_prompt = ChatPromptTemplate.from_template(
 interpreter_agent = interpreter_prompt | llm
 
 def interpreter_agent_node(state: State) -> Command[Literal["get_schema_node"]]:
+    print(state)
     question = state["question"]
     list_tables = state["list_tables"]
     query = question + "\nList of tables: " + list_tables
@@ -83,7 +84,7 @@ Below are the tables from which you need to extract the columns:
 Also here is the schema of each table:
 {schema}
 
-Your output should follow this format only:
+Your output should follow this format:
 
 {{
     "column_target" : {{
@@ -95,7 +96,7 @@ Your output should follow this format only:
 }}
 
 - Ensure that "column_target" remains in the output, and populate the list with the names of the relevant columns for each table.
-- If you cannot identify any relevant columns, simply return "NULL".
+- Also you are not allowed to make your own information and return false information.
 
 """
 
@@ -112,6 +113,7 @@ selector_json_parser = JsonOutputParser(pydantic_object=Column)
 selector_agent = selector_prompt | llm | selector_json_parser
 
 def selector_agent_node(state: State) -> Command[Literal["scribe_agent_node", "interpreter_agent_node"]]:
+    goto="scribe_agent_node"
     question = state["question"]
     table_target = state["table_target"]
     table_target_str = "\nTable that you have to find the columns: \n[" + ", ".join(table_target) + "]"
@@ -119,16 +121,14 @@ def selector_agent_node(state: State) -> Command[Literal["scribe_agent_node", "i
     schema = ""
     for i in schema_data:
         schema += (i+"\n")
-    
+    #schema = ""
+    #table_target_str = ""
     response = selector_agent.invoke({"todo": question, "input": table_target_str, "schema": schema})
-   # if response == "NULL":
-    #    return Command(
-    #    update=response,
-    #    goto="interpreter_agent_node",
-    #)
+    #if response["selector_valid"] == "False":
+    #    goto="interpreter_agent_node"
     return Command(
         update=response,
-        goto="scribe_agent_node",
+        goto=goto,
     )
 
 scribe = """You are a SQL expert with a strong attention to detail.
@@ -141,7 +141,6 @@ When generating the query:
 
 Output the SQL query that answers the input question without a tool call.
 
-Unless the user specifies a specific number of examples they wish to obtain, always limit your query to at most 5 results.
 You can order the results by a relevant column to return the most interesting examples in the database.
 Never query for all the columns from a specific table, only ask for the relevant columns given the question.
 
@@ -224,8 +223,13 @@ Double check the SQLite query for common mistakes, including:
 - Casting to the correct data type
 - Using the proper columns for joins
 
-If there are any of the above mistakes, return only NULL.
-Else return True.
+If there are any of the above mistakes, return this output format only:
+
+    True
+
+Else:
+
+    False
 
 ONLY GENERATE THE SQL QUERY, FOR GOD'S SAKE DON'T USE MARKDOWN SYNTAX TO GENERATE RESULTS
 
@@ -239,16 +243,14 @@ verify_prompt = ChatPromptTemplate.from_template(
 verify_agent = verify_prompt | llm
 
 def verify_agent_node(state: State) -> Command[Literal["executor_agent_node", "scribe_agent_node"]]:
+    goto = "executor_agent_node"
     gen = state["generation"]
     response = verify_agent.invoke({"input": gen})
     valid = response.text()
-    goto = "executor_agent_node"
-    if valid == "NULL":
-        goto = "scribe_agent_node"
+    #if valid == "False":
+    #    goto = "scribe_agent_node"
     return Command(
-        update={
-            "valid": valid
-        },
+        update={ "verify_valid" : valid },
         goto=goto,
     )
 

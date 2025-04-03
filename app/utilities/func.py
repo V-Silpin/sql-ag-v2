@@ -8,8 +8,10 @@ class State(TypedDict):
     list_tables: str
     table_target: List[str]
     schema: List[str]
+    selector_valid: str
     column_target: Dict[str, List[str]]
     generation: str | None
+    verify_valid: str
     data: str
     error: str | None
     valid: str

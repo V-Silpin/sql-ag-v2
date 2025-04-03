@@ -1,12 +1,13 @@
 from mermaid.vis import display_graph
 from workflow.flow import graph
+from llmops.langfuse import langfuse_handler
 
 def main():
     print("Hello from sql-ag-v2!")
     question = "List all employee names and their office state location"
     try:
         for event in graph.stream(
-        {"question": question}#, config={"recursion_limit": 5}#, "callbacks": [langfuse_handler]}
+        {"question": question}#, config={"recursion_limit": 25, "callbacks": [langfuse_handler]}
         ):
             print(event)
             print("\n\n")    
