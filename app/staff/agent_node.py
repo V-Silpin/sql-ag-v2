@@ -1,5 +1,6 @@
 import json
 
+from langchain_openai import AzureChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.output_parsers import JsonOutputParser
@@ -17,13 +18,14 @@ import os
 from dotenv import load_dotenv
 
 load_dotenv()
-google_api_key = os.getenv("GEMINI_API_KEY")
+google_api_key = os.getenv("GOOGLE_API_KEY")
 
 examples = None
 
 with open("app/staff/few_shot/examples.json", "r", encoding='utf-8', errors='ignore') as f:
     examples = json.load(f)
 
+#llm = AzureChatOpenAI() #Using Azure OpenAI model
 llm = ChatGoogleGenerativeAI(model="gemini-2.0-flash", google_api_key=google_api_key)
 
 interpreter = '''
