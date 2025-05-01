@@ -68,7 +68,7 @@
 ### Backend
    - **Langchain**
       - SQLDatabases Toolkit
-      - Open AI LLM Integration
+      - Gemini LLM Integration
    
    - **Langgraph**
       - To build agent workflow
@@ -87,7 +87,7 @@
       - To containerize the agent
    - **K8S**
       - To manage containerized agents
-   - **Azure** 
+   - **GCP** 
       - For hosting and scaling the application.
 ### Monitoring System
    - **Langfuse**
