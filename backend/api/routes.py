@@ -14,7 +14,7 @@ router = APIRouter()
 # Request/Response Models
 class QueryRequest(BaseModel):
     question: str = Field(..., description="Natural language question about the database")
-    model_name: Optional[str] = Field("gemini-1.5-flash", description="LLM model to use")
+    model_name: Optional[str] = Field("gemini-3-flash-preview", description="LLM model to use")
     temperature: Optional[float] = Field(0, ge=0, le=2, description="Temperature for response generation")
 
 
