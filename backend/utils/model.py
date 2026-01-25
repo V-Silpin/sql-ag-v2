@@ -5,7 +5,7 @@ import os
 from langchain_google_genai import ChatGoogleGenerativeAI
 
 
-def get_llm(model_name: str = "gemini-1.5-flash", temperature: float = 0):
+def get_llm(model_name: str = "gemini-3-flash-preview", temperature: float = 0):
     """
     Get configured LLM instance
     
