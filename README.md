@@ -1,97 +1,207 @@
-# SQL-Agent
+# SQL Agent Backend
 
+A LangChain-powered SQL agent that converts natural language questions into SQL queries.
 
+## Features
 
-## An agent built to convert natural language queries to SQL queries
----
+- 🤖 **Natural Language to SQL**: Ask questions in plain English
+- 🗄️ **PostgreSQL Database**: Full SQL database support
+- 📦 **MinIO Object Storage**: S3-compatible file storage
+- 🚀 **FastAPI Backend**: High-performance async API
+- 🔗 **LangChain Integration**: Powered by Google Gemini
+- 🐳 **Docker Support**: Fully containerized setup
 
-## Workflow
+## Quick Start
 
-### Step-by-Step Process
+### 1. Setup Environment Variables
 
-1. **Input**:
-   - User enter his query into th website
-    - The query is sent to the SQL agent
+Copy the example environment file and add your API keys:
 
-2. **List table from DB tool**:
-    - First step is to retrieve list of tables from the SQL database
-    - Then the user query and the list of tables is sent to the Interpreter Agent
+```bash
+cp .env.example .env
+```
 
-3. **Interpreter Agent**:
-    - The task of the interpreter agent is to find the target table wrt the user query & the list of tables
+Edit `.env` and add your Google API key:
+```
+GOOGLE_API_KEY=your_actual_api_key_here
+```
 
-4. **Get Schema of a table Tool**:
+### 2. Start Services with Docker
 
-    - This tool provides the schema of the table
-    - It is used to find the schema from the target table 
+```bash
+cd ..
+docker-compose up -d
+```
 
-4. **Selector Agent**:
+This will start:
+- PostgreSQL (port 5432)
+- MinIO (ports 9000, 9001)
+- Backend API (port 8003)
 
-    - The task of the selector agent is to find the target column wrt the user query & the schema data retrieved from the `Get Schema Tool`
+### 3. Access Services
 
-    - If the target column is not found, then it goes to the `Interpretor Agent` to repeat its task
+- **Backend API**: http://localhost:8003
+- **API Docs**: http://localhost:8003/docs
+- **MinIO Console**: http://localhost:9001 (login: minioadmin/minioadmin123)
+- **PostgreSQL**: localhost:5432 (user: sqlagent, pass: sqlagent123)
 
-    - Else, it goes to `Scriber Agent`
+## API Endpoints
 
-4. **Scriber Agent**:
+### Query Endpoints
 
-    - The task of the scriber agent is to write the SQL query baseed on the user query, target table & column table
+**POST /api/query** - Query database with natural language
+```json
+{
+  "question": "How many users are in the database?",
+  "model_name": "gemini-3-flash-preview",
+  "temperature": 0
+}
+```
 
-4. **Verify Agent**:
+**POST /api/execute-sql** - Execute SQL directly
+```json
+{
+  "query": "SELECT * FROM users LIMIT 10"
+}
+```
 
-    - The task of the verify agent is to check the SQL query if it is syntactically correct or not
-    
-    - Also it will check for DML statements (INSERT, UPDATE, DELETE, DROP etc.) in the SQL query
+**GET /api/database/info** - Get database schema information
 
-    - If any error is found in the SQL query, it will go to the `Scriber Agent` to regenerate the right query
+**GET /api/database/test** - Test database connection
 
-    - Else it will go to the `Execute Tool`
+### Storage Endpoints
 
-4. **Execute Tool**:
+**GET /api/storage/test** - Test MinIO connection
 
-    - This tool executes the SQL query in the database
+**POST /api/storage/create-bucket?bucket_name=my-bucket** - Create bucket
 
-    - If any error occured after execution, then it is sent to the `Scriber Agent` to regenerate the code
+**GET /api/storage/list-files?bucket_name=my-bucket** - List files
 
-4. **Summary Agent**:
+## Development Setup
 
-    - The task of the summary agent is to summarize the results given from the `Execute Tool` and the user query
+### Local Development (without Docker)
 
----
+1. Install dependencies:
+```bash
+uv sync
+```
+
+2. Start PostgreSQL and MinIO locally or use Docker:
+```bash
+docker-compose up postgres minio
+```
+
+3. Run the backend:
+```bash
+python main.py
+```
+
+## Project Structure
+
+```
+backend/
+├── api/
+│   ├── __init__.py
+│   └── routes.py          # FastAPI routes
+├── staff/
+│   ├── __init__.py
+│   └── sql_agent.py       # LangChain SQL agent
+├── toolkit/
+│   └── __init__.py
+├── utils/
+│   ├── __init__.py
+│   ├── model.py           # LLM configuration
+│   ├── database.py        # Database utilities
+│   └── storage.py         # MinIO utilities
+├── main.py                # FastAPI application
+├── pyproject.toml         # Dependencies
+├── Dockerfile
+└── .env.example
+```
+
+## Usage Examples
+
+### Example 1: Natural Language Query
+
+```python
+import requests
+
+response = requests.post("http://localhost:8003/api/query", json={
+    "question": "What are the top 5 customers by total order value?"
+})
+print(response.json())
+```
+
+### Example 2: Database Info
+
+```python
+response = requests.get("http://localhost:8003/api/database/info")
+info = response.json()
+print(f"Tables: {info['tables']}")
+```
+
+### Example 3: Create Sample Data
+
+```python
+# Connect to PostgreSQL and create sample tables
+response = requests.post("http://localhost:8003/api/execute-sql", json={
+    "query": """
+        CREATE TABLE IF NOT EXISTS users (
+            id SERIAL PRIMARY KEY,
+            name VARCHAR(100),
+            email VARCHAR(100),
+            created_at TIMESTAMP DEFAULT NOW()
+        )
+    """
+})
+```
+
+## Configuration
+
+### Environment Variables
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `GOOGLE_API_KEY` | Google Gemini API key | Required |
+| `DATABASE_URL` | PostgreSQL connection URL | See docker-compose.yml |
+| `MINIO_ENDPOINT` | MinIO endpoint | localhost:9000 |
+| `MINIO_ACCESS_KEY` | MinIO access key | minioadmin |
+| `MINIO_SECRET_KEY` | MinIO secret key | minioadmin123 |
+| `PORT` | API server port | 8003 |
+
+## Troubleshooting
+
+### Database Connection Issues
+
+```bash
+# Check if PostgreSQL is running
+docker-compose ps postgres
+
+# View PostgreSQL logs
+docker-compose logs postgres
+```
+
+### MinIO Connection Issues
+
+```bash
+# Check if MinIO is running
+docker-compose ps minio
+
+# Access MinIO console
+open http://localhost:9001
+```
+
+### Agent Not Responding
+
+- Verify `GOOGLE_API_KEY` is set correctly
+- Check API quotas and rate limits
+- Review logs: `docker-compose logs backend`
 
 ## Tech Stack
 
-### Frontend
-
-- **React** : Chatbot UI
-
-### Backend
-   - **Langchain**
-      - SQLDatabases Toolkit
-      - Gemini LLM Integration
-   
-   - **Langgraph**
-      - To build agent workflow
-
-   - **Mermaid.Ink**
-      - To visualize the workflow
-
-   - **Mem0** (to be added)
-      - To add memory to the agent
-
-   - **MCP (Model Context Protocol)** (to be added)
-      - Will be used to serve the agent via MCP
-
-### Deployment
-   - **Docker**
-      - To containerize the agent
-   - **K8S**
-      - To manage containerized agents
-   - **GCP** 
-      - For hosting and scaling the application.
-### Monitoring System
-   - **Langfuse**
-      - For tracking and storing agent trace logs
-   - **Evaluation Pipeline**
-      - To evaluate the performance of the agent
----
+- **Backend**: FastAPI, Python 3.11+
+- **LLM**: Google Gemini via LangChain
+- **Database**: PostgreSQL 16
+- **Storage**: MinIO
+- **ORM**: SQLAlchemy
+- **Package Manager**: uv
