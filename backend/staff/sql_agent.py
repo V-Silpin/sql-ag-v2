@@ -1,22 +1,31 @@
 """
-SQL Agent with LangChain
+SQL Agent with LangGraph
 """
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Annotated, Sequence
 from langchain_community.utilities import SQLDatabase
-from langchain_community.agent_toolkits import create_sql_agent
-from langchain.agents.agent import AgentExecutor
-from langchain.agents.agent_types import AgentType
+from langchain_community.agent_toolkits import SQLDatabaseToolkit
+from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, ToolMessage
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+from langgraph.graph import StateGraph, START, END
+from langgraph.graph.message import add_messages
+from langgraph.prebuilt import ToolNode
+from typing_extensions import TypedDict
 from utils.model import get_llm
 from utils.database import get_db_manager
 import pandas as pd
 
 
+class AgentState(TypedDict):
+    """State for the SQL agent graph"""
+    messages: Annotated[Sequence[BaseMessage], add_messages]
+
+
 class SQLAgent:
     """
-    LangChain-powered SQL Agent for natural language to SQL queries
+    LangGraph-powered SQL Agent for natural language to SQL queries
     """
     
-    def __init__(self, model_name: str = "gemini-1.5-flash", temperature: float = 0):
+    def __init__(self, model_name: str = "gemini-3-flash-preview", temperature: float = 0):
         """
         Initialize SQL Agent
         
@@ -26,8 +35,9 @@ class SQLAgent:
         """
         self.llm = get_llm(model_name=model_name, temperature=temperature)
         self.db_manager = get_db_manager()
-        self._agent: Optional[AgentExecutor] = None
+        self._agent = None
         self._langchain_db: Optional[SQLDatabase] = None
+        self._toolkit: Optional[SQLDatabaseToolkit] = None
     
     @property
     def langchain_db(self) -> SQLDatabase:
@@ -37,23 +47,125 @@ class SQLAgent:
         return self._langchain_db
     
     @property
-    def agent(self) -> AgentExecutor:
-        """Get or create SQL agent"""
-        if self._agent is None:
-            self._agent = create_sql_agent(
-                llm=self.llm,
+    def toolkit(self) -> SQLDatabaseToolkit:
+        """Get SQL Database toolkit with tools"""
+        if self._toolkit is None:
+            self._toolkit = SQLDatabaseToolkit(
                 db=self.langchain_db,
-                agent_type=AgentType.ZERO_SHOT_REACT_DESCRIPTION,
-                verbose=True,
-                handle_parsing_errors=True,
-                max_iterations=10,
-                max_execution_time=60
+                llm=self.llm
             )
+        return self._toolkit
+    
+    @property
+    def agent(self):
+        """Get or create LangGraph SQL agent"""
+        if self._agent is None:
+            # System prompt with database context
+            system_message = """You are an expert SQL agent working with a PostgreSQL database containing employee data.
+
+DATABASE SCHEMA OVERVIEW:
+The database contains employee records with the following tables:
+
+1. **employees** - Core employee information (300,024 records)
+   - emp_no (PK): Employee number
+   - birth_date: Date of birth
+   - first_name: First name
+   - last_name: Last name
+   - gender: Gender (custom type)
+   - hire_date: Date of hire
+
+2. **departments** - Department information (9 departments)
+   - dept_no (PK): Department number (e.g., 'd001')
+   - dept_name: Department name (unique)
+
+3. **dept_emp** - Employee-Department assignments (shows which employees work in which departments)
+   - emp_no, dept_no (Composite PK)
+   - from_date: Start date of assignment
+   - to_date: End date of assignment
+
+4. **dept_manager** - Department managers
+   - emp_no, dept_no (Composite PK)
+   - from_date: Start date as manager
+   - to_date: End date as manager
+
+5. **salaries** - Employee salary history (2.8M+ records)
+   - emp_no, from_date (Composite PK)
+   - salary: Salary amount
+   - to_date: End date of salary period
+
+6. **titles** - Employee job titles (443K+ records)
+   - emp_no, title, from_date (Composite PK)
+   - to_date: End date of title
+
+RELATIONSHIPS:
+- All tables connect to employees via emp_no (foreign key)
+- dept_emp and dept_manager link employees to departments
+- Employees can have multiple salary records and titles over time
+
+QUERY GUIDELINES:
+- Use JOINs to combine employee data with departments, salaries, and titles
+- Consider date ranges (from_date, to_date) for historical queries
+- Use aggregations (COUNT, AVG, SUM) for analytical queries
+- Filter by to_date to find current assignments/salaries (e.g., to_date = '9999-01-01' indicates current)
+
+When answering questions:
+1. First understand what data is needed
+2. Write a SQL query to fetch the data
+3. Execute the query using the available tools
+4. Analyze the results and provide a clear answer
+
+Generate accurate SQL queries based on the user's natural language questions."""
+
+            # Get tools from toolkit
+            tools = self.toolkit.get_tools()
+            
+            # Bind tools to the LLM
+            llm_with_tools = self.llm.bind_tools(tools)
+            
+            # Create prompt template
+            prompt = ChatPromptTemplate.from_messages([
+                ("system", system_message),
+                MessagesPlaceholder(variable_name="messages"),
+            ])
+            
+            # Define the agent node
+            def call_model(state: AgentState):
+                """Call the LLM with tools"""
+                messages = prompt.invoke({"messages": state["messages"]})
+                response = llm_with_tools.invoke(messages)
+                return {"messages": [response]}
+            
+            # Define conditional edge function
+            def should_continue(state: AgentState):
+                """Determine whether to continue or end"""
+                messages = state["messages"]
+                last_message = messages[-1]
+                
+                # If there are no tool calls, we're done
+                if not hasattr(last_message, "tool_calls") or not last_message.tool_calls:
+                    return END
+                return "tools"
+            
+            # Create the graph
+            workflow = StateGraph(AgentState)
+            
+            # Add nodes
+            workflow.add_node("agent", call_model)
+            workflow.add_node("tools", ToolNode(tools))
+            
+            # Add edges
+            workflow.add_edge(START, "agent")
+            workflow.add_conditional_edges("agent", should_continue, ["tools", END])
+            workflow.add_edge("tools", "agent")
+            
+            # Compile the graph
+            self._agent = workflow.compile()
+        
         return self._agent
     
     def run_query(self, question: str) -> Dict[str, Any]:
         """
-        Run a natural language query
+        Run a natural language query using LangGraph agent
         
         Args:
             question: Natural language question about the database
@@ -62,14 +174,51 @@ class SQLAgent:
             Dictionary with query results and metadata
         """
         try:
-            # Run the agent
-            result = self.agent.invoke({"input": question})
+            # Run the LangGraph agent
+            result = self.agent.invoke(
+                {"messages": [HumanMessage(content=question)]}
+            )
+            
+            # Extract messages from result
+            messages = result.get("messages", [])
+            
+            # Get the final AI response
+            final_answer = ""
+            intermediate_steps = []
+            
+            for msg in messages:
+                if isinstance(msg, AIMessage):
+                    # Handle content that might be a string or a list of content blocks
+                    if msg.content:
+                        if isinstance(msg.content, str):
+                            final_answer = msg.content
+                        elif isinstance(msg.content, list):
+                            # Extract text from content blocks
+                            text_parts = []
+                            for content_block in msg.content:
+                                if isinstance(content_block, dict) and content_block.get("type") == "text":
+                                    text_parts.append(content_block.get("text", ""))
+                                elif isinstance(content_block, str):
+                                    text_parts.append(content_block)
+                            final_answer = " ".join(text_parts)
+                        else:
+                            final_answer = str(msg.content)
+                    
+                    # Capture tool calls
+                    if hasattr(msg, 'tool_calls') and msg.tool_calls:
+                        for tool_call in msg.tool_calls:
+                            intermediate_steps.append({
+                                "action": tool_call.get("name", "unknown"),
+                                "action_input": str(tool_call.get("args", {}))[:500],
+                                "observation": ""
+                            })
             
             return {
                 "success": True,
                 "question": question,
-                "answer": result.get("output", ""),
-                "intermediate_steps": self._format_steps(result.get("intermediate_steps", []))
+                "answer": final_answer,
+                "intermediate_steps": intermediate_steps,
+                "messages": [self._format_message(msg) for msg in messages]
             }
         except Exception as e:
             return {
@@ -79,6 +228,24 @@ class SQLAgent:
                 "answer": f"Error processing query: {str(e)}"
             }
     
+    def _format_message(self, msg: BaseMessage) -> Dict[str, Any]:
+        """Format a message for output"""
+        content = msg.content
+        
+        # Handle content that might be a list of content blocks
+        if isinstance(content, list):
+            text_parts = []
+            for block in content:
+                if isinstance(block, dict) and block.get("type") == "text":
+                    text_parts.append(block.get("text", ""))
+                elif isinstance(block, str):
+                    text_parts.append(block)
+            content = " ".join(text_parts)
+        
+        return {
+            "type": msg.__class__.__name__,
+            "content": content,
+        }
     def _format_steps(self, steps: List) -> List[Dict[str, Any]]:
         """Format intermediate steps for better readability"""
         formatted_steps = []
@@ -155,7 +322,7 @@ class SQLAgent:
 _sql_agent: Optional[SQLAgent] = None
 
 
-def get_sql_agent(model_name: str = "gemini-1.5-flash", temperature: float = 0) -> SQLAgent:
+def get_sql_agent(model_name: str = "gemini-3-flash-preview", temperature: float = 0) -> SQLAgent:
     """
     Get global SQL agent instance
     
