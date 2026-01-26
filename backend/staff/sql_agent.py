@@ -12,7 +12,11 @@ from langgraph.prebuilt import ToolNode
 from typing_extensions import TypedDict
 from utils.model import get_llm
 from utils.database import get_db_manager
+from utils.storage import get_storage_manager
+from io import BytesIO
+from datetime import datetime
 import pandas as pd
+import uuid
 
 
 class AgentState(TypedDict):
@@ -316,6 +320,137 @@ Generate accurate SQL queries based on the user's natural language questions."""
         except Exception as e:
             print(f"Error executing query: {e}")
             return None
+    
+    def generate_excel_report(
+        self, 
+        question: str, 
+        bucket_name: str = "reports",
+        expires: int = 3600
+    ) -> Dict[str, Any]:
+        """
+        Generate an Excel report from a natural language query and upload to MinIO
+        
+        Args:
+            question: Natural language question about the database
+            bucket_name: MinIO bucket to store the report
+            expires: Presigned URL expiration time in seconds (default: 1 hour)
+            
+        Returns:
+            Dictionary with download URL and metadata
+        """
+        try:
+            # Run the query first to get results
+            result = self.run_query(question)
+            
+            if not result.get("success"):
+                return {
+                    "success": False,
+                    "error": result.get("error", "Query failed")
+                }
+            
+            # Extract SQL query from intermediate steps
+            sql_query = None
+            for step in result.get("intermediate_steps", []):
+                if step.get("action") in ["sql_db_query", "QuerySQLDataBaseTool"]:
+                    # Extract query from action_input
+                    action_input = step.get("action_input", "")
+                    if "query" in action_input.lower():
+                        # Parse the query from the input string
+                        import re
+                        match = re.search(r"SELECT.*?(?=\}|$)", action_input, re.IGNORECASE | re.DOTALL)
+                        if match:
+                            sql_query = match.group(0).strip()
+            
+            # If no SQL found in steps, try to generate from question
+            if not sql_query:
+                return {
+                    "success": False,
+                    "error": "Could not extract SQL query from agent execution"
+                }
+            
+            # Execute query and get DataFrame
+            df = self.query_to_dataframe(sql_query)
+            
+            if df is None or df.empty:
+                return {
+                    "success": False,
+                    "error": "Query returned no data"
+                }
+            
+            # Generate Excel file in memory
+            excel_buffer = BytesIO()
+            with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
+                # Write query results
+                df.to_excel(writer, sheet_name='Query Results', index=False)
+                
+                # Add metadata sheet
+                metadata_df = pd.DataFrame({
+                    'Property': ['Question', 'SQL Query', 'Generated At', 'Row Count'],
+                    'Value': [
+                        question,
+                        sql_query,
+                        datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                        len(df)
+                    ]
+                })
+                metadata_df.to_excel(writer, sheet_name='Metadata', index=False)
+            
+            excel_buffer.seek(0)
+            excel_data = excel_buffer.getvalue()
+            
+            # Upload to MinIO
+            storage = get_storage_manager()
+            
+            # Ensure bucket exists
+            storage.create_bucket(bucket_name)
+            
+            # Generate unique filename
+            filename = f"report_{uuid.uuid4().hex[:8]}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+            
+            # Upload file
+            success = storage.upload_file(
+                bucket_name=bucket_name,
+                object_name=filename,
+                data=excel_data,
+                content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+            
+            if not success:
+                return {
+                    "success": False,
+                    "error": "Failed to upload report to storage"
+                }
+            
+            # Generate presigned URL
+            download_url = storage.get_presigned_url(
+                bucket_name=bucket_name,
+                object_name=filename,
+                expires=expires
+            )
+            
+            if not download_url:
+                return {
+                    "success": False,
+                    "error": "Failed to generate download URL"
+                }
+            
+            return {
+                "success": True,
+                "question": question,
+                "answer": result.get("answer", ""),
+                "download_url": download_url,
+                "filename": filename,
+                "bucket_name": bucket_name,
+                "row_count": len(df),
+                "expires_in": expires,
+                "sql_query": sql_query
+            }
+            
+        except Exception as e:
+            return {
+                "success": False,
+                "error": f"Error generating report: {str(e)}"
+            }
 
 
 # Global SQL agent instance
