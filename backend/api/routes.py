@@ -18,6 +18,14 @@ class QueryRequest(BaseModel):
     temperature: Optional[float] = Field(0, ge=0, le=2, description="Temperature for response generation")
 
 
+class ReportRequest(BaseModel):
+    question: str = Field(..., description="Natural language question about the database")
+    model_name: Optional[str] = Field("gemini-3-flash-preview", description="LLM model to use")
+    temperature: Optional[float] = Field(0, ge=0, le=2, description="Temperature for response generation")
+    bucket_name: Optional[str] = Field("reports", description="MinIO bucket name for storing reports")
+    expires: Optional[int] = Field(3600, ge=60, le=86400, description="Download URL expiration in seconds (1 hour - 24 hours)")
+
+
 class SQLRequest(BaseModel):
     query: str = Field(..., description="SQL query to execute")
 
@@ -28,6 +36,19 @@ class QueryResponse(BaseModel):
     answer: Optional[str] = None
     error: Optional[str] = None
     intermediate_steps: Optional[list] = None
+
+
+class ReportResponse(BaseModel):
+    success: bool
+    question: Optional[str] = None
+    answer: Optional[str] = None
+    download_url: Optional[str] = None
+    filename: Optional[str] = None
+    bucket_name: Optional[str] = None
+    row_count: Optional[int] = None
+    expires_in: Optional[int] = None
+    sql_query: Optional[str] = None
+    error: Optional[str] = None
 
 
 class DatabaseInfoResponse(BaseModel):
@@ -56,6 +77,32 @@ async def query_database(request: QueryRequest):
             temperature=request.temperature
         )
         result = agent.run_query(request.question)
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/api/query/report", response_model=ReportResponse)
+async def generate_report(request: ReportRequest):
+    """
+    Query the database and generate an Excel report with download link
+    
+    Args:
+        request: ReportRequest with question and optional parameters
+        
+    Returns:
+        ReportResponse with download URL and metadata
+    """
+    try:
+        agent = get_sql_agent(
+            model_name=request.model_name,
+            temperature=request.temperature
+        )
+        result = agent.generate_excel_report(
+            question=request.question,
+            bucket_name=request.bucket_name,
+            expires=request.expires
+        )
         return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
