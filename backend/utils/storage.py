@@ -3,6 +3,7 @@ MinIO Storage Manager
 """
 import os
 from typing import Optional
+from datetime import timedelta
 from minio import Minio
 from minio.error import S3Error
 from io import BytesIO
@@ -107,6 +108,29 @@ class StorageManager:
         except S3Error as e:
             print(f"MinIO connection failed: {e}")
             return False
+    
+    def get_presigned_url(self, bucket_name: str, object_name: str, expires: int = 3600) -> Optional[str]:
+        """
+        Generate a presigned URL for downloading a file
+        
+        Args:
+            bucket_name: Name of the bucket
+            object_name: Name of the object
+            expires: Expiration time in seconds (default: 1 hour)
+            
+        Returns:
+            Presigned URL or None on error
+        """
+        try:
+            url = self.client.presigned_get_object(
+                bucket_name,
+                object_name,
+                expires=timedelta(seconds=expires)
+            )
+            return url
+        except S3Error as e:
+            print(f"Error generating presigned URL: {e}")
+            return None
 
 
 # Global storage manager instance
